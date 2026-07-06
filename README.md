@@ -6,6 +6,10 @@ This repository contains the final vignette developed for the BioSys course.
 
 
 
+# Rendered vignette
+
+[Open the rendered vignette](https://flaviogckessler.github.io/BioSys_Project/CellChat_ProximityNetwork_PathwaySpace.html)
+
 \## Description
 
 
