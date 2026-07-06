@@ -1,0 +1,301 @@
+---
+title: "Plotting cell-cell communication in spatially resolved transcriptomics"
+author: 
+- name: Flávio Gabriel Carazza-Kessler
+date: "2026-07-06"
+bibliography: bibliography.bib
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+vignette: >
+  %\VignetteIndexEntry{Using RGraphSpace for spatial data analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE, purl=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  collapse = TRUE,
+  comment = "#>",
+  fig.align = "center",
+  fig.width = 7,
+  fig.height = 5
+  )
+```
+
+## Overview
+
+This vignette will cover the usage of cell-cell communication data from CellChat [@Jin2021CellChat; @Jin2025CellChat] in spatial transcriptomics and plot ligant-receptor pairs in neighbors spots using PathwaySpace [@Tercan2025PathwaySpace; @Ellrott2025CancerSubtypes] architecture.
+
+# Before you start
+
+This vignette uses preprocessed data from CellChat and Seurat [@Hao2023Seurat], please see previous scripts.
+
+# Required Packages
+
+```{r Load packages, eval=TRUE, message=FALSE}
+# Load packages
+library(RGraphSpace)
+library(PathwaySpace)
+library(dplyr)
+library(igraph)
+library(Seurat)
+```
+
+# Load preprocessed data
+
+```{r f, eval=TRUE, echo=TRUE}
+# Set the path of your working directory
+path <- "D:/SpatialTranscriptomic_Doc/R_PROJECTS/Colon_VisiumHD/"
+
+load(paste(path,"stxbrain_Normalized_GraphSpace.RData",sep=""))
+spot_cellchat <- readRDS(paste(path,"spot-spot_commu_Allbrain.rds",sep=""))
+```
+
+```{r, eval=TRUE, echo=TRUE}
+# Set a reusable theme for spatial plots
+spatial_theme <- theme_gspace_coords(theme = "th3", is_norm = TRUE,
+                                     xlab = "Spot coordinates 1", ylab = "Spot coordinates 2")
+
+# Left: 'seurat_clusters' annotation overlaid on tissue image
+cpal1 <- DiscretePalette(nlevels(gs$seurat_clusters), "polychrome")
+
+ggplot(gs) + 
+  annotation_gspace_image(gs) +
+  geom_nodespace(mapping = aes(colour = seurat_clusters), size=0.8, pch=19) +
+  scale_colour_discrete(palette = cpal1) +
+  theme_gspace_legend(discrete_colour = TRUE) +
+  spatial_theme
+
+head(spot_cellchat)
+```
+
+## Load proximityNetwork() function
+
+The proximityNetwork function receives a GraphSpace/PathwaySpace object with no edges and retrieves a GraphSpace/PathwaySpace object with edges between the nearest neighbor spots.
+
+```{r, eval=TRUE, echo=TRUE}
+proximityNetwork <- function(gs){
+  # Get nodes slot from GraphSpace object
+  nodes <- gs@nodes
+  
+  # Calculate the six most proximal neighbors of each spot, k=7 is set 
+  # because the spot itself also is considered as a neighbor with dist=0.
+  # Eachs central spot is expected to have six neighbors due to the placement
+  # of the spots on Visium slides.
+  nnei = 6
+  nnpg <- RANN::nn2(nodes[,c("x","y")], nodes[,c("x","y")], k=nnei+1)
+  nn.dists <- as.data.frame(nnpg$nn.dists[,2:(nnei+1)])
+  nn.idx <- as.data.frame(nnpg$nn.idx[,2:(nnei+1)])
+  
+  # The boundary spots are expected to have less than six neighbors, so the mean
+  # distance of the first neighbors is calculated to find witch edges should be included or not.
+  mdist<-1/(mean(1/nn.dists$V1))
+  nn.dmean <- nn.dists
+  
+  message("Calculating the nearest neighbors distances...")
+  
+  # Each spot have at least one neighbor
+  nn.dmean[,1]<-TRUE
+  cols <- 2:ncol(nn.dists)
+  nn.dmean[cols] <- (nn.dists[cols] >= 0.95 * mdist) &
+    (nn.dists[cols] <= 1.05 * mdist)
+  m_matrix <-nn.dmean * nn.idx
+  
+  # The nn.dmean have the info of the edges that should be included in the graph.
+  # The nn.idx have the indices of the nodes.
+  # Now these data will be converted to a edge list compatible with igraph nomenclature.
+  
+  message("Creating edges list...")
+  
+  m_matrix$idx <- row.names(m_matrix)
+  edges_long <- tidyr::pivot_longer(m_matrix,names_to = "from",values_to = "to",cols = -idx)
+  edges_long <- edges_long %>% dplyr::select(-from) %>% dplyr::filter(to!=0)
+  colnames(edges_long) <- c("from","to")
+  
+  if(sum(nn.dmean) != length(edges_long$from)){
+    message("Unexpected number of edges, something is depracated...")
+    stop()
+  }
+  
+  # The graph of proximity have a undirected profile, so edges_long have several duplicate edges in "from-to" and "to-from".
+  edges_unique <- edges_long %>%
+    dplyr::mutate(
+      v1 = pmin(from, to),
+      v2 = pmax(from, to)
+    ) %>%
+    dplyr::distinct(v1, v2) %>%
+    dplyr::transmute(
+      from = v1,
+      to = v2
+    )
+  
+  edges_unique[] <- lapply(edges_unique, as.numeric)
+  message("Assigning spot names to edges...")
+  
+  edges_unique$from <- nodes$name[edges_unique$from]
+  edges_unique$to   <- nodes$name[edges_unique$to]
+  
+  # Building the new igraph object with the selected edges
+  nodes <- nodes %>% dplyr::relocate(name) %>% dplyr::select(-vertex)
+  
+  gs_graph <- igraph::graph_from_data_frame(
+    d = edges_unique,
+    vertices = nodes,
+    directed = FALSE
+  )
+  
+  # Converting the igraph object to GraphSpace object
+  gs2 <- RGraphSpace::GraphSpace(gs_graph)
+  
+  gs@edges <- gs2@edges
+  gs@graph <- gs_graph
+  
+  return(gs)
+}
+
+```
+
+# Inserting edges on GraphSpace/PathwaySpace object
+
+```{r, eval=TRUE, echo=TRUE}
+# Plotting Visium dataset before inserting edges
+ggplot(gs) + 
+  annotation_gspace_image(gs) +
+  geom_edgespace() +
+  scale_colour_discrete(palette = cpal1) +
+  theme_gspace_legend(discrete_colour = TRUE) +
+  spatial_theme +
+  coord_cartesian(xlim=c(0.4,0.6), ylim = c(0.4,0.6)) +
+  geom_nodespace(mapping = aes(colour = seurat_clusters), size=3, pch=19)
+```
+
+```{r, eval=TRUE, echo=TRUE}
+# Insert edges to all nearest neighbors
+gs <- proximityNetwork(gs)
+# Create a backup object
+gs3<- gs
+
+# Plotting Visium dataset after inserting edges
+ggplot(gs) + 
+  annotation_gspace_image(gs) +
+  geom_edgespace() +
+  scale_colour_discrete(palette = cpal1) +
+  theme_gspace_legend(discrete_colour = TRUE) +
+  spatial_theme +
+  coord_cartesian(xlim=c(0.4,0.6), ylim = c(0.4,0.6)) +
+  geom_nodespace(mapping = aes(colour = seurat_clusters), size=3, pch=19)
+```
+
+# Merging GraphSpace/PathwaySpace object edges with cell-cell communications
+
+Cell-cell communications from CellChat are filtered by the proximity edges stored in the GraphSpace/PathwaySpace object. Thus, remain only cell-cell communications in which the ligand and the receptor are expressed in two neighbor spots.
+
+```{r, eval=TRUE, echo=TRUE}
+# Build all ligand-receptor pairs in the proximity edges
+edges <- gs@edges
+merge_edges <- edges %>%
+  left_join(spot_cellchat,
+            by = c("name1" = "source_spot","name2" = "target_spot"))
+merge_edges <- merge_edges %>% dplyr::select(-c(vertex1,vertex2))
+merge_edges$arrowType <- 1
+
+# Store unique ligand-receptor pairs
+un_merge <- merge_edges %>% select(ligand,receptor,interaction_name) %>% unique()
+un_merge <- na.omit(un_merge)
+head(un_merge)
+
+# Get nodes slot from gs
+nodes <- gs@nodes %>% dplyr::relocate(name) %>% dplyr::select(-vertex)
+```
+
+# Plotting all ligand-receptor pairs with PathwaySpace
+
+Here, each ligand-receptor pairs are plotted individually. Each iteration stores the specific ligand-receptor pair and filter edges from merge_edges that include the ligand and the receptor. These edges are used to update the GraphSpace object, removing unused edges and nodes from it. Thus, the object remain only with the neighbor nodes that express the ligand and/or the receptor.
+
+Then, the PathwaySpace is built and the silhouette is calculated considering only the nodes involved in the cell-cell commmunication. In PathwaySpace it is possible to make only one projection per feature at time, so the ligand and receptor counts were summed up. The projection were used using vertex circularProjection() and each plot were saved.
+
+```{r, eval=TRUE, echo=TRUE}
+l_vec<-length(un_merge$interaction_name)
+#Setting l_vec to 5 only to avoid time consuming loop, please change it if you expect to visualize all ligand-receptor plots
+l_vec <- 3
+
+for (i in 1:l_vec) {
+  gs <- gs3
+  interest <- un_merge$interaction_name[i]
+  ligand <- un_merge$ligand[i]
+  receptor <- un_merge$receptor[i]
+
+  message("Iteration number:",i, "   Interaction: ",interest)
+  if(grepl("_",receptor)){
+    message("Receptor with name out of standard")
+    next
+  }
+  sel_merge <- merge_edges %>% filter(interaction_name == interest)
+  nodes_sel <- unique(c(sel_merge$name1,sel_merge$name2))
+  nodes_sel <- nodes[nodes$name %in% nodes_sel,]
+  
+  gs_graph <- igraph::graph_from_data_frame(
+    d = sel_merge,
+    vertices = nodes_sel,
+    directed = TRUE
+  )
+  
+  # Converting the igraph object to GraphSpace object
+  gs2 <- RGraphSpace::GraphSpace(gs_graph)
+  
+  gs@edges <- gs2@edges
+  gs@graph <- gs_graph
+  gs@nodes <-gs2@nodes
+  rm(sel_merge,nodes_sel,gs2)
+  
+  # Create a PathwaySpace object
+  pspace_obj <- buildPathwaySpace(gs)
+  
+  # Get distance to the nearest spot
+  nspot <- getNearestNode(pspace_obj)
+  pdist <- mean(nspot$dist) # average distance
+  
+  # Add a graph silhouette to the PathwaySpace object
+  pspace_obj <- silhouetteMapping(pspace_obj, baseline = 0.1)
+  
+  # Sum ligant and receptor signals
+  inter_data <- pspace_obj@fdata[,ligand]
+  inter_data <-inter_data[pspace_obj@nodes$name]
+  inter_data2 <- pspace_obj@fdata[,receptor]
+  inter_data2 <-inter_data2[pspace_obj@nodes$name]
+  inter_data <- inter_data +inter_data2
+  
+  
+  # Assign vertexSignal
+  vertexSignal(pspace_obj)<-inter_data
+  # Compute circularProjection
+  pspace_obj <- circularProjection(pspace_obj,
+                                   decay.fun=weibullDecay(decay=0.5, pdist = pdist),
+                                   aggregate.fun = signalAggregation("wmean"),
+                                   k=gs_vcount(pspace_obj))
+  g<-ggplot(pspace_obj) + 
+    annotation_gspace_image(pspace_obj) + 
+    annotation_pspace_signal(pspace_obj, si.alpha = 0.25) + 
+    spatial_theme +
+    labs(title = interest)
+  
+  print(g)
+  
+  ggsave(paste("images/",interest,".png",sep=""),plot=g)
+  
+  rm(pspace_obj)
+  gc()
+}
+```
+
+# Session information
+
+```{r label='Session information', eval=TRUE, echo=FALSE}
+sessionInfo()
+```
+
+# References
