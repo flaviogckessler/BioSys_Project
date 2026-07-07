@@ -2,9 +2,15 @@
 
 This repository contains the final vignette and methods developed for the BioSys course.
 
-# Rendered vignette
+## Rendered vignettes
 
-[Open the rendered vignette](https://flaviogckessler.github.io/BioSys_Project/CellChat_ProximityNetwork_PathwaySpace.html)
+The framework of this project followed three steps:
+
+(i) Process the `stxbrain` dataset from `Seurat` and save it as a normalized GraphSpace object, see [Setup vignette](https://flaviogckessler.github.io/BioSys_Project/Setup_GraphSpaceObj_stxbrain.html)
+
+(ii) Compute cell-cell communication using CellChat package and store spot-to-spot ligand-receptor pairs, see [CellChat vignette](https://flaviogckessler.github.io/BioSys_Project/CellChat_vignette.html)
+
+(iii) With `stxbrain` and all ligand-receptor pairs datasets, the visualization of cell-cell communication in spatial transcriptomics data were performed using PathwaySpace. Please, see [PathwaySpace cell communication vignette](https://flaviogckessler.github.io/BioSys_Project/CellChat_ProximityNetwork_PathwaySpace.html)
 
 ## Description
 
@@ -13,8 +19,14 @@ The vignette demonstrates the use of R for spatial transcriptomics analysis and 
 ## Repository structure
 
 \- `CellChat\_ProximityNetwork\_PathwaySpace.Rmd`: main R Markdown file.
+
 \- `bibliography.bib`: references cited in the vignette.
+
 \- `CellChat\_ProximityNetwork\_PathwaySpace.html`: rendered vignette
+
+\- `spot-spot_commu_Allbrain.rds`: data with all spot-spot cell communications, retrieved from CellChat
+
+\- `stxbrain_Normalized_GraphSpace.RData`: Normalized GraphSpace object of `stxbrain`
 
 ## Requirements
 

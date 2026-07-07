@@ -1,0 +1,140 @@
+---
+title: "Building a GraphSpace Object from the Seurat stxBrain Dataset"
+author: "Flávio Gabriel Carazza Kessler"
+date: "2026-07-06"
+bibliography: bibliography.bib
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: show
+---
+
+# Overview
+
+This vignette demonstrates how to load the `stxBrain` spatial transcriptomics dataset from `SeuratData`, preprocess it with `Seurat` [@Hao2023Seurat], convert the resulting object into a `GraphSpace` object using `RGraphSpace` [@RGraphSpace2026], align the graph coordinates to the tissue image, and save the normalized `GraphSpace` object.
+
+This vignette aims to save the `stxBrain` for the further analysis of cell-cell communication visualization. Please see the vignette: [Plotting cell-cell communication in spatially resolved transcriptomics](https://flaviogckessler.github.io/BioSys_Project/CellChat_ProximityNetwork_PathwaySpace.html). This framework follows the same procedures presented in RGraphSpace: [Spatial Data vignette](https://sysbiolab.github.io/RGraphSpace/articles/spatial-data.html).
+
+# Check required versions
+
+```{r check-required-versions, eval=TRUE, echo=TRUE, message=TRUE, warning=TRUE}
+# Check required versions
+if (packageVersion("RGraphSpace") < "1.4.1") {
+  message("Need to update 'RGraphSpace' for this vignette")
+  remotes::install_github("sysbiolab/RGraphSpace")
+}
+
+if (packageVersion("PathwaySpace") < "1.4.1") {
+  message("Need to update 'PathwaySpace' for this vignette")
+  remotes::install_github("sysbiolab/PathwaySpace")
+}
+
+if (packageVersion("Seurat") < "5.5.0") {
+  message("Need to update 'Seurat' for this vignette")
+  remotes::install_github("satijalab/Seurat")
+}
+```
+
+# Load packages
+
+```{r load-packages, eval=TRUE, echo=TRUE, message=TRUE, warning=FALSE}
+library("RGraphSpace")
+library("PathwaySpace")
+library("Seurat")
+library("SeuratObject")
+library("SeuratData")
+library("patchwork")
+library("dplyr")
+library("igraph")
+```
+
+# Install the Seurat dataset
+
+The `stxBrain` dataset only needs to be installed once. To check which datasets are already installed, run:
+
+```{r check-installed-data, eval=TRUE, echo=TRUE}
+SeuratData::InstalledData()
+
+if("stxBrain" %in% SeuratData::InstalledData()$Dataset ){
+  message("stxBrain is already installed, no need to install it again.")
+}else{
+ SeuratData::InstallData("stxBrain") 
+}
+```
+
+# Load the stxBrain dataset
+
+`LoadData()` may print conversion warnings when loading older SeuratData objects.
+
+```{r load-stxbrain-data, eval=TRUE, echo=TRUE, message=TRUE, warning=TRUE}
+seurat_obj <- LoadData("stxBrain", type = "anterior1")
+```
+
+# Preprocess the Seurat object
+
+The dataset is normalized using `SCTransform()`, reduced using PCA, and clustered using the standard Seurat workflow. Please see the [spatial transcriptomics vignette](https://satijalab.org/seurat/articles/spatial_vignette) from Seurat.
+
+```{r preprocess-seurat-object, eval=TRUE, echo=TRUE, message=TRUE, warning=FALSE}
+seurat_obj <- SCTransform(seurat_obj, assay = "Spatial", verbose = FALSE)
+
+seurat_obj <- RunPCA(seurat_obj, assay = "SCT", verbose = FALSE)
+
+seurat_obj <- FindNeighbors(
+  object = seurat_obj,
+  reduction = "pca",
+  dims = 1:30
+)
+
+seurat_obj <- FindClusters(
+  object = seurat_obj,
+  verbose = FALSE
+)
+```
+
+# Convert the Seurat object to GraphSpace
+
+The `as.GraphSpace()` function converts the spatial coordinates and associated metadata from the Seurat object into a `GraphSpace` object.
+
+```{r create-graphspace, eval=TRUE, echo=TRUE, message=TRUE, warning=FALSE}
+gs <- as.GraphSpace(seurat_obj, space = "spatial",scale = "lowres")
+```
+
+# Add the tissue image
+
+If available, the tissue image can be extracted from the Seurat object and assigned to the `GraphSpace` object.
+
+```{r add-tissue-image, eval=TRUE, echo=TRUE, message=TRUE, warning=FALSE}
+gs_image(gs) <- SeuratObject::GetImage(seurat_obj, mode = "raster")
+```
+
+# Normalize graph coordinates to image space
+
+The graph coordinates are normalized to the image coordinate system. By default, this attempts to align the graph's bottom-up coordinates with the image's top-down matrix layout.
+
+```{r normalize-graphspace, eval=TRUE, echo=TRUE, message=TRUE, warning=FALSE}
+gs <- normalizeGraphSpace(gs)
+```
+
+# Inspect the GraphSpace object
+
+```{r inspect-graphspace, eval=TRUE, echo=TRUE}
+gs
+```
+
+# Save the normalized GraphSpace object
+
+The final object is saved as an `.RData` file.
+
+```{r save-graphspace, eval=TRUE, echo=TRUE}
+save(gs, file = "stxbrain_Normalized_GraphSpace.RData")
+```
+
+# Session information
+
+```{r session-info, eval=TRUE, echo=TRUE}
+sessionInfo()
+```
+
+# References

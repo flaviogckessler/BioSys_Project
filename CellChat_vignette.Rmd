@@ -1,0 +1,276 @@
+---
+title: "Inferring cell-cell communication in `stxBrain` dataset with CellChat"
+author: 
+- name: Flávio Gabriel Carazza-Kessler
+date: "2026-07-06"
+bibliography: bibliography.bib
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+vignette: >
+  %\VignetteIndexEntry{Using RGraphSpace for spatial data analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE, purl=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  collapse = TRUE,
+  comment = "#>",
+  fig.align = "center",
+  fig.width = 7,
+  fig.height = 5
+  )
+```
+
+# Overview
+
+This vignette demonstrates a spatial transcriptomics workflow for inferring ligand-receptor-mediated cell-cell communication in the `stxBrain` dataset from Seurat [@Hao2023Seurat]. The analysis follows the main steps described in the CellChat framework [@Jin2021CellChat; @Jin2025CellChat], with adaptations for referred dataset.
+
+
+Starting from a Seurat object, the workflow normalizes gene expression, performs dimensionality reduction and clustering, and prepares the main inputs required by CellChat. CellChat is then used to infer communication probabilities between Seurat clusters.
+
+Because CellChat infers communication at the group level rather than directly at the spot-by-spot level, this vignette also includes an additional step to project cluster-level ligand-receptor predictions onto neighboring spatial spots.
+
+Therefore, the final spot-level communication table should be interpreted as a spatial projection of CellChat group-level predictions onto local spot neighborhoods. It does not represent independent de novo CellChat inference for each individual spot pair.
+
+This workflow is based on the official CellChat spatial transcriptomics tutorial: [CellChat inference in spatial transcriptomics](https://htmlpreview.github.io/?https://github.com/jinworks/CellChat/blob/master/tutorial/CellChat_analysis_of_spatial_transcriptomics_data.html).
+
+# Required Packages
+
+```{r install-cellchat-dependencies, eval=FALSE, echo=TRUE, message=TRUE, warning=TRUE}
+# Install helper packages if needed
+if (!requireNamespace("devtools", quietly = TRUE)) {
+  install.packages("devtools")
+}
+
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager")
+}
+
+if (!requireNamespace("SpatialCellChat", quietly = TRUE)) {
+  devtools::install_github("jinworks/SpatialCellChat")
+}
+
+if (!requireNamespace("CellChat", quietly = TRUE)) {
+  devtools::install_github("jinworks/CellChat")
+}
+
+if (!requireNamespace("BiocNeighbors", quietly = TRUE)) {
+  BiocManager::install("BiocNeighbors")
+}
+
+if (!requireNamespace("MERINGUE", quietly = TRUE)) {
+  devtools::install_github("JEFworks-Lab/MERINGUE")
+}
+
+if (!requireNamespace("ALRA", quietly = TRUE)) {
+  devtools::install_github("KlugerLab/ALRA")
+}
+
+if (!requireNamespace("RcppML", quietly = TRUE)) {
+  devtools::install_github("zdebruine/RcppML")
+}
+
+if (!requireNamespace("presto", quietly = TRUE)) {
+  devtools::install_github("immunogenomics/presto")
+}
+```
+
+```{r Load packages, eval=TRUE, message=FALSE}
+# Load packages
+library(CellChat)
+library(patchwork)
+library(Seurat)
+library(SeuratObject)
+library(SeuratData)
+library(dplyr)
+library(tibble)
+options(stringsAsFactors = FALSE)
+```
+
+# Load data
+
+```{r load-seurat-data, eval=TRUE, echo=TRUE}
+# Load Seurat data: stxbrain
+seurat_obj <- LoadData("stxBrain", type = "anterior1")
+
+# Normalize, reduce dimensions, and annotate clusters
+seurat_obj <- SCTransform(seurat_obj, assay = "Spatial", verbose = FALSE)
+seurat_obj <- RunPCA(seurat_obj, assay = "SCT", verbose = FALSE)
+seurat_obj <- FindNeighbors(seurat_obj, reduction = "pca", dims = 1:30)
+seurat_obj <- FindClusters(seurat_obj, verbose = FALSE)
+
+# Plot Seurat object
+Seurat::SpatialDimPlot(seurat_obj, label = T, label.size = 3)
+```
+
+# Prepare input data for CellChat analysis
+
+As described by the maintainers, CellChat requires four user set inputs:
+
+-   `data.input` (Gene expression data of spots/cells)
+
+-   `meta` (User assigned cell labels and samples labels)
+
+-   `coordinates` (Spatial coordinates of spots/cells)
+
+-   `spatial.factors` (Spatial factors of spatial distance)
+
+```{r preparing-CellChat-inputs, eval=TRUE, echo=TRUE}
+data.input = Seurat::GetAssayData(seurat_obj, layer = "data", assay = "SCT") # normalized data matrix
+
+# define the meta data: 
+# a column named `samples` should be provided for spatial transcriptomics analysis, which is useful for analyzing cell-cell communication by aggregating multiple samples/replicates. Of note, for comparison analysis across different conditions, users still need to create a CellChat object seperately for each condition.
+meta = data.frame(labels = Seurat::Idents(seurat_obj), samples = "sample1", 
+                  row.names = names(Seurat::Idents(seurat_obj))) # manually create a dataframe consisting of the cell labels
+meta$labels <- paste0("s_",as.character(meta$labels))
+
+# Spatial locations of spots from full (NOT high/low) resolution images are required.
+spatial.locs = Seurat::GetTissueCoordinates(seurat_obj, scale = NULL, cols = c("imagerow", "imagecol"))
+spatial.locs <- spatial.locs %>% select(-cell)
+
+# Spatial factors of spatial coordinates
+d.spatial <- computeCellDistance(coordinates = spatial.locs)
+
+spot.size = 55 # the theoretical spot size (um) in 10X Visium
+
+spatial.factors = data.frame(ratio = 100/min(d.spatial[d.spatial!=0]), tol = spot.size/2)
+
+```
+
+## Creating CellChat object
+
+```{r creatingCellChat, eval=TRUE, echo=TRUE}
+cellchat <- createCellChat(object = data.input,
+                           meta = meta, 
+                           group.by = "labels",
+                           datatype = "spatial", 
+                           coordinates = spatial.locs,
+                           spatial.factors = spatial.factors)
+
+cellchat
+```
+
+# Creating CellChat database
+
+```{r CellChatDB, eval=TRUE, echo=TRUE}
+CellChatDB <- CellChatDB.mouse
+showDatabaseCategory(CellChatDB)
+
+# use a subset of CellChatDB for cell-cell communication analysis
+CellChatDB.use <- subsetDB(CellChatDB, search = "Secreted Signaling", key = "annotation") # use Secreted Signaling
+
+# set the used database in the object
+cellchat@DB <- CellChatDB.use
+```
+
+# Preprocessing of expression data for cell-cell communication
+
+```{r preprocessing, eval=TRUE, echo=TRUE}
+# subset the expression data of signaling genes for saving computation cost
+cellchat <- subsetData(cellchat) # This step is necessary even if using the whole database
+future::plan("multisession", workers = 4) 
+cellchat <- identifyOverExpressedGenes(cellchat)
+
+cellchat <- identifyOverExpressedInteractions(cellchat, variable.both = F)
+```
+
+# Inference of cell-cell comunication
+
+Note: this step may take some time.
+
+Considering that we are interested in spot neighborhood communication, the following inference can be restricted by some attributes, such as ligand-receptor distance no greater than 150um. Moreover, set contect.range = 100 will restrict contact-dependent signalling to the spot-spot mean distance, 100um.
+
+```{r Infering, eval=TRUE, echo=TRUE}
+cellchat <- computeCommunProb(cellchat, 
+                              type = "triMean",
+                              distance.use = TRUE, 
+                              interaction.range = 150,
+                              scale.distance = 0.01,
+                              contact.range = 100,
+                              contact.dependent = TRUE,
+                              contact.knn.k = 6, #limit to theorical 6 nearest neighbors
+                              nboot = 100)
+cellchat <- filterCommunication(cellchat, min.cells = 10)
+```
+
+## Extract inferred cellular communication to data frame
+
+```{r , eval=TRUE, echo=TRUE}
+df.net <- subsetCommunication(cellchat,thresh = 0.05)
+```
+
+# Converting CellChat predictions to spot-level communication data
+
+CellChat infers communication probabilities at the **group level**, not directly at the **spot-by-spot level**. In this analysis, each group corresponds to a Seurat cluster. Therefore, CellChat estimates ligand-receptor communication between clusters, such as cluster 1 to cluster 2, but it does not directly report which individual spatial spots are involved in each interaction.
+
+To approximate spot-level communication, we first identify all pairs of neighboring spots within the same spatial interaction range used in `computeCommunProb()`. Then, each spot pair is annotated with its corresponding source and target cluster identity. Finally, these spatially neighboring spot pairs are joined with the CellChat group-level ligand-receptor predictions. As a result, each inferred cluster-level interaction is assigned to all neighboring spot pairs that match the same source-target cluster combination.
+
+```{r converting-data, eval=TRUE, echo=TRUE}
+# Spot IDs from metadata
+spot.ids <- rownames(cellchat@meta)
+
+# Spot-to-group annotation
+spot.groups <- tibble(
+  spot = spot.ids,
+  group = as.character(cellchat@idents)
+)
+
+# Reorder coordinates to match CellChat metadata
+coords <- spatial.locs[spot.ids, , drop = FALSE]
+
+# Convert pixel coordinates to micrometers
+coords.um <- coords * spatial.factors$ratio
+
+# Pairwise spot distances
+dmat <- as.matrix(dist(coords.um))
+diag(dmat) <- Inf
+
+# Same interaction range used in computeCommunProb()
+interaction.range <- 150
+
+idx <- which(dmat <= interaction.range, arr.ind = TRUE)
+
+spot.pairs <- tibble(
+  source_spot = rownames(dmat)[idx[, 1]],
+  target_spot = colnames(dmat)[idx[, 2]],
+  distance_um = dmat[idx]
+)
+
+# Add source and target group identities
+spot.pairs <- spot.pairs %>%
+  left_join(
+    spot.groups,
+    by = c("source_spot" = "spot")
+  ) %>%
+  rename(source = group) %>%
+  left_join(
+    spot.groups,
+    by = c("target_spot" = "spot")
+  ) %>%
+  rename(target = group)
+```
+
+The resulting `spot.pairs` object contains all neighboring spot pairs within the selected distance threshold, together with their corresponding source and target cluster annotations.
+
+```{r saving, eval=TRUE, echo=TRUE}
+# Join nearby spot pairs with CellChat group-level predictions
+spot.to.spot.communication <- spot.pairs %>%
+  inner_join(df.net, by = c("source", "target")) %>%
+  arrange(source_spot, target_spot, pathway_name, interaction_name)
+
+head(spot.to.spot.communication)
+saveRDS(spot.to.spot.communication, file = "spot-spot_commu_Allbrain.rds")
+```
+
+# Session information
+
+```{r label='Session information', eval=TRUE, echo=FALSE}
+sessionInfo()
+```
+
+# References
