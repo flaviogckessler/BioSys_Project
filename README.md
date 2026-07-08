@@ -1,6 +1,10 @@
 # BioSys\_Project
 
-This repository contains the final vignette and methods developed for the BioSys course.
+This repository contains the vignettes and methods developed for the BioSys course.
+
+To access the course final report please click: [Final report](https://flaviogckessler.github.io/BioSys_Project/Relatorio_FlavioKessler_BioSys.html)
+
+Or download the final report PDF: `Relatorio\_FlavioKessler\_BioSys.pdf`
 
 ## Rendered vignettes
 

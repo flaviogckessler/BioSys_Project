@@ -29,5 +29,9 @@ Thumbs.db
 *.tmp
 *.log
 
-# html
+# Directory
 images/
+Relatorio_FlavioKessler_BioSys_files
+
+# Intermediate Files
+Relatorio_FlavioKessler_BioSys.tex
