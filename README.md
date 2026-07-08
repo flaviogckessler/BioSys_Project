@@ -1,12 +1,12 @@
-# BioSys\_Project
+# BioSys_Project
 
 This repository contains the vignettes and methods developed for the BioSys course.
 
 To access the course final report please click [Portuguese]: [Final report](https://flaviogckessler.github.io/BioSys_Project/Relatorio_FlavioKessler_BioSys.html)
 
-Or download the final report PDF [Portuguese]: `Relatorio\_FlavioKessler\_BioSys.pdf`
+Or download the final report PDF [Portuguese]: `Relatorio_FlavioKessler_BioSys.pdf`
 
-You can also download the project presentation PDF [Portuguese]: `Apresentacao\_FlavioKessler\_BioSys.pdf`
+You can also download the project presentation PDF [Portuguese]: `Apresentacao_FlavioKessler_BioSys.pdf`
 
 ## Rendered vignettes
 
@@ -24,11 +24,11 @@ The vignette demonstrates the use of R for spatial transcriptomics analysis and 
 
 ## Repository structure
 
-\- `CellChat\_ProximityNetwork\_PathwaySpace.Rmd`: main R Markdown file.
+\- `CellChat_ProximityNetwork_PathwaySpace.Rmd`: main R Markdown file.
 
 \- `bibliography.bib`: references cited in the vignette.
 
-\- `CellChat\_ProximityNetwork\_PathwaySpace.html`: rendered vignette
+\- `CellChat_ProximityNetwork_PathwaySpace.html`: rendered vignette
 
 \- `spot-spot_commu_Allbrain.rds`: data with all spot-spot cell communications, retrieved from CellChat
 
